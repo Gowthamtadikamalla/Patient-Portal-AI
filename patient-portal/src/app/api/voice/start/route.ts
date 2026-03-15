@@ -35,7 +35,41 @@ export async function POST(request: NextRequest) {
     const normalizedPhone = phoneNumber.replace(/[\s\-\(\)\.]/g, '');
     const e164Phone = normalizedPhone.startsWith('+') ? normalizedPhone : `+1${normalizedPhone}`;
 
+    // Build the system prompt with all context the voice AI needs
+    const voiceSystemPrompt = `You are Kyra, the AI medical receptionist for Kyron Medical Partners.
+
+You are warm, professional, and empathetic. You help patients with:
+1. Scheduling appointments — collect patient info, match them to the right specialist, and book available time slots
+2. Checking prescription refill status
+3. Providing office information — addresses, hours, phone numbers
+
+IMPORTANT: You are continuing a conversation that started in web chat. Here is the previous conversation context:
+
+${context}
+
+Continue the conversation naturally from where it left off. Remember everything discussed. Be warm and helpful.
+Collect patient info ONE FIELD AT A TIME conversationally — never ask for all info at once.
+
+SAFETY RULES:
+- NEVER provide medical advice, diagnoses, or treatment recommendations.
+- NEVER interpret symptoms or suggest what a condition might be.
+- If someone describes an emergency, immediately say: "Please call 911 or go to your nearest emergency room immediately."
+- If asked for medical advice, say: "I'm not able to provide medical advice. I'd recommend discussing that directly with your doctor. Would you like to schedule an appointment?"
+
+AVAILABLE DOCTORS:
+- Dr. Sarah Chen (ID: dr-chen) — Orthopedics (bones, joints, muscles, back, knee, hip, shoulder)
+- Dr. Michael Rivera (ID: dr-rivera) — Cardiology (heart, chest, blood pressure, palpitations)
+- Dr. Priya Patel (ID: dr-patel) — Dermatology (skin, rash, acne, moles, eczema)
+- Dr. James Wilson (ID: dr-wilson) — Gastroenterology (stomach, digestion, abdomen, nausea, bowel)
+
+OFFICE LOCATIONS:
+- Downtown Boston: 100 Federal Street, Suite 401, Boston, MA 02110 | Mon-Fri 8am-6pm | (617) 555-0100
+- Cambridge Medical: 25 First Street, Suite 200, Cambridge, MA 02141 | Mon-Sat 7am-7pm | (617) 555-0200
+
+USE THE TOOLS PROVIDED to find doctors, check available appointment slots, and book appointments. Always use the real data from tools — never make up appointment times.`;
+
     // Create Vapi outbound call with conversation context
+    // NOTE: serverUrl for webhook is configured on the Vapi assistant in the dashboard
     const vapiResponse = await fetch('https://api.vapi.ai/call/phone', {
       method: 'POST',
       headers: {
@@ -56,16 +90,7 @@ export async function POST(request: NextRequest) {
             messages: [
               {
                 role: 'system',
-                content: `You are Kyra, the AI medical receptionist for Kyron Medical Partners. 
-                
-IMPORTANT: You are continuing a conversation that started in web chat. Here is the previous conversation context:
-
-${context}
-
-Continue the conversation naturally from where it left off. Remember everything discussed. Be warm and helpful.
-Collect patient info ONE FIELD AT A TIME conversationally.
-
-SAFETY: Never provide medical advice, diagnoses, or treatment recommendations. If asked, redirect to scheduling a doctor appointment.`,
+                content: voiceSystemPrompt,
               },
             ],
             tools: [
@@ -73,12 +98,11 @@ SAFETY: Never provide medical advice, diagnoses, or treatment recommendations. I
                 type: 'function',
                 function: {
                   name: 'find_doctor',
-                  description: 'Find a doctor based on body part or medical concern',
+                  description: 'Find the best doctor based on body part or medical concern. Returns doctor name, specialty, and ID.',
                   parameters: {
                     type: 'object',
                     properties: {
-                      body_part: { type: 'string', description: 'Body part or area of concern' },
-                      concern_description: { type: 'string', description: 'Description of concern' },
+                      body_part: { type: 'string', description: 'Body part or area of concern (e.g. knee, heart, skin, stomach)' },
                     },
                     required: ['body_part'],
                   },
@@ -88,13 +112,13 @@ SAFETY: Never provide medical advice, diagnoses, or treatment recommendations. I
                 type: 'function',
                 function: {
                   name: 'get_available_slots',
-                  description: 'Get available appointment slots for a doctor',
+                  description: 'Get available appointment time slots for a specific doctor. Returns dates and times the doctor is free.',
                   parameters: {
                     type: 'object',
                     properties: {
-                      doctor_id: { type: 'string', description: 'Doctor ID' },
-                      preferred_day: { type: 'string', description: 'Preferred day of week' },
-                      preferred_time_of_day: { type: 'string', enum: ['morning', 'afternoon', 'any'] },
+                      doctor_id: { type: 'string', description: 'Doctor ID (e.g. dr-chen, dr-rivera, dr-patel, dr-wilson)' },
+                      preferred_day: { type: 'string', description: 'Preferred day of week (e.g. Monday, Tuesday)' },
+                      preferred_time_of_day: { type: 'string', enum: ['morning', 'afternoon', 'any'], description: 'Preferred time of day' },
                     },
                     required: ['doctor_id'],
                   },
@@ -104,19 +128,19 @@ SAFETY: Never provide medical advice, diagnoses, or treatment recommendations. I
                 type: 'function',
                 function: {
                   name: 'book_appointment',
-                  description: 'Book a specific appointment slot',
+                  description: 'Book a specific appointment slot for a patient. Triggers email and SMS confirmation.',
                   parameters: {
                     type: 'object',
                     properties: {
-                      doctor_id: { type: 'string' },
-                      slot_id: { type: 'string' },
-                      patient_first_name: { type: 'string' },
-                      patient_last_name: { type: 'string' },
-                      patient_dob: { type: 'string' },
-                      patient_phone: { type: 'string' },
-                      patient_email: { type: 'string' },
-                      reason: { type: 'string' },
-                      sms_opt_in: { type: 'boolean' },
+                      doctor_id: { type: 'string', description: 'Doctor ID' },
+                      slot_id: { type: 'string', description: 'Time slot ID from get_available_slots result' },
+                      patient_first_name: { type: 'string', description: 'Patient first name' },
+                      patient_last_name: { type: 'string', description: 'Patient last name' },
+                      patient_dob: { type: 'string', description: 'Patient date of birth' },
+                      patient_phone: { type: 'string', description: 'Patient phone number' },
+                      patient_email: { type: 'string', description: 'Patient email address' },
+                      reason: { type: 'string', description: 'Reason for visit' },
+                      sms_opt_in: { type: 'boolean', description: 'Whether patient opts into SMS reminders' },
                     },
                     required: ['doctor_id', 'slot_id', 'patient_first_name', 'patient_last_name', 'patient_dob', 'patient_phone', 'patient_email', 'reason'],
                   },
@@ -126,12 +150,12 @@ SAFETY: Never provide medical advice, diagnoses, or treatment recommendations. I
                 type: 'function',
                 function: {
                   name: 'check_prescription_status',
-                  description: 'Check prescription refill status',
+                  description: 'Check the status of a prescription refill request',
                   parameters: {
                     type: 'object',
                     properties: {
-                      patient_name: { type: 'string' },
-                      medication_name: { type: 'string' },
+                      patient_name: { type: 'string', description: 'Patient full name' },
+                      medication_name: { type: 'string', description: 'Name of the medication' },
                     },
                     required: ['patient_name', 'medication_name'],
                   },
@@ -141,13 +165,12 @@ SAFETY: Never provide medical advice, diagnoses, or treatment recommendations. I
                 type: 'function',
                 function: {
                   name: 'get_office_info',
-                  description: 'Get office address, hours, and contact info',
+                  description: 'Get office address, hours, and contact information',
                   parameters: {
                     type: 'object',
                     properties: {
-                      office_name_or_location: { type: 'string' },
+                      office_name_or_location: { type: 'string', description: 'Office name or location to look up' },
                     },
-                    required: [],
                   },
                 },
               },
