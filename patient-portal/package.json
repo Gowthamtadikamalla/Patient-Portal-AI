@@ -1,0 +1,30 @@
+{
+  "name": "patient-portal",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint"
+  },
+  "dependencies": {
+    "@sendgrid/mail": "^8.1.6",
+    "@vapi-ai/web": "^2.5.2",
+    "next": "16.1.6",
+    "openai": "^6.29.0",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "twilio": "^5.13.0",
+    "uuid": "^13.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "@types/uuid": "^10.0.0",
+    "eslint": "^9",
+    "eslint-config-next": "16.1.6",
+    "typescript": "^5"
+  }
+}
