@@ -48,8 +48,6 @@ export async function POST(request: NextRequest) {
         customer: {
           number: e164Phone,
         },
-        // Point Vapi to our webhook so function calls route to our backend
-        serverUrl: `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/voice/webhook`,
         assistantOverrides: {
           firstMessage: `Hi! I'm Kyra from Kyron Medical Partners. I'm continuing our chat conversation. I have all the context from our previous discussion. How can I help you?`,
           model: {
