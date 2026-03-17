@@ -198,9 +198,18 @@ function extractToolCalls(message: Record<string, unknown>): { id: string; name:
     for (const item of toolWithList) {
       const name = item.name || item.toolCall?.name || item.toolCall?.function?.name || '';
       const id = item.toolCall?.id || '';
-      const args = item.toolCall?.parameters || {};
+      let args: Record<string, unknown> = {};
+      if (item.toolCall?.parameters) {
+        args = item.toolCall.parameters as Record<string, unknown>;
+      } else if (item.toolCall?.function?.arguments) {
+        try {
+          args = JSON.parse(item.toolCall.function.arguments);
+        } catch {
+          // keep empty args if Vapi sends non-JSON arguments
+        }
+      }
       if (name) {
-        calls.push({ id, name, args: args as Record<string, unknown> });
+        calls.push({ id, name, args });
       }
     }
     if (calls.length > 0) return calls;
