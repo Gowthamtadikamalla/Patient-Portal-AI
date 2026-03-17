@@ -4,6 +4,12 @@ import { doctors } from '@/data/doctors';
 import { offices } from '@/data/offices';
 import store from '@/lib/store';
 
+function truncateContext(context: string, maxChars = 6000): string {
+  if (!context || context.length <= maxChars) return context;
+  const trimmed = context.slice(-maxChars);
+  return `[Earlier messages omitted for length]\n${trimmed}`;
+}
+
 // Build voice system prompt dynamically from data files — not hardcoded
 function buildVoiceDoctorList(): string {
   return doctors.map(d => `- ${d.name} (ID: ${d.id}) — ${d.specialty} (${d.bodyParts.slice(0, 5).join(', ')})`).join('\n');
@@ -38,13 +44,13 @@ export async function POST(request: NextRequest) {
     // Get conversation context to pass to voice AI
     const context = getSessionContext(sessionId);
 
-    if (!vapiKey || !assistantId) {
+    if (!vapiKey || !assistantId || !vapiPhoneNumberId) {
       console.log('[Voice] Vapi.ai not configured. Would initiate call to:', phoneNumber);
       console.log('[Voice] Context length:', context.length, 'chars');
       return NextResponse.json({
         success: false,
         demo: true,
-        message: 'Voice AI is not configured. In production, this would initiate a phone call to your number with full conversation context.',
+        message: 'Voice AI is not configured. In production, this would initiate a phone call to your number with full conversation context. Please verify VAPI_API_KEY, VAPI_ASSISTANT_ID, and VAPI_PHONE_NUMBER_ID.',
         callId: `demo-${Date.now()}`,
       });
     }
@@ -52,6 +58,7 @@ export async function POST(request: NextRequest) {
     // Normalize phone number to E.164 format
     const normalizedPhone = phoneNumber.replace(/[\s\-\(\)\.]/g, '');
     const e164Phone = normalizedPhone.startsWith('+') ? normalizedPhone : `+1${normalizedPhone}`;
+    const boundedContext = truncateContext(context);
 
     // Build the system prompt dynamically from data files
     const voiceSystemPrompt = `You are Kyra, the AI medical receptionist for Kyron Medical Partners.
@@ -63,7 +70,7 @@ You are warm, professional, and empathetic. You help patients with:
 
 IMPORTANT: You are continuing a conversation that started in web chat. Here is the previous conversation context:
 
-${context}
+${boundedContext}
 
 Continue the conversation naturally from where it left off. Remember everything discussed. Be warm and helpful.
 Collect patient info ONE FIELD AT A TIME conversationally — never ask for all info at once.
@@ -202,12 +209,15 @@ USE THE TOOLS PROVIDED to find doctors, check available appointment slots, book 
 
     if (!vapiResponse.ok) {
       const errorData = await vapiResponse.text();
-      console.error('[Voice] Vapi error:', errorData);
+      console.error('[Voice] Vapi error status:', vapiResponse.status);
+      console.error('[Voice] Vapi error body:', errorData);
       // Fall back to demo mode instead of hard error
       return NextResponse.json({
         success: false,
         demo: true,
         message: `Voice AI connection could not be established. In production with valid Vapi credentials, this would initiate a phone call to ${phoneNumber} with full conversation context from our chat.`,
+        errorDetail: `vapi_status_${vapiResponse.status}`,
+        providerMessage: errorData.slice(0, 300),
         callId: `demo-${Date.now()}`,
       });
     }
