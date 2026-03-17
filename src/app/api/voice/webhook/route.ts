@@ -14,14 +14,37 @@ import store from '@/lib/store';
 interface ToolCallItem {
   id?: string;
   name?: string;
-  parameters?: Record<string, unknown>;
-  function?: { name?: string; arguments?: string };
+  parameters?: Record<string, unknown> | string;
+  arguments?: Record<string, unknown> | string;
+  function?: { name?: string; arguments?: Record<string, unknown> | string };
 }
 
 interface ToolWithToolCall {
   name?: string;
   type?: string;
   toolCall?: ToolCallItem;
+}
+
+function coerceArgs(value: unknown): Record<string, unknown> {
+  if (!value) return {};
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value);
+      return parsed && typeof parsed === 'object' ? parsed as Record<string, unknown> : {};
+    } catch {
+      return {};
+    }
+  }
+  if (typeof value === 'object') return value as Record<string, unknown>;
+  return {};
+}
+
+function pickString(args: Record<string, unknown>, ...keys: string[]): string {
+  for (const key of keys) {
+    const value = args[key];
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  return '';
 }
 
 function normalizeTime(input: string): string {
@@ -112,6 +135,30 @@ async function executeFunction(
     case 'book_appointment': {
       const sessionId = `voice-${Date.now()}`;
       const bookingArgs = { ...funcArgs } as Record<string, string>;
+
+      // Accept snake_case and camelCase variants from different tool payloads/providers
+      const doctorId = pickString(bookingArgs as unknown as Record<string, unknown>, 'doctor_id', 'doctorId');
+      const slotId = pickString(bookingArgs as unknown as Record<string, unknown>, 'slot_id', 'slotId');
+      const appointmentDate = pickString(bookingArgs as unknown as Record<string, unknown>, 'appointment_date', 'appointmentDate', 'date');
+      const appointmentTime = pickString(bookingArgs as unknown as Record<string, unknown>, 'appointment_time', 'appointmentTime', 'time');
+      const firstName = pickString(bookingArgs as unknown as Record<string, unknown>, 'patient_first_name', 'patientFirstName', 'first_name', 'firstName');
+      const lastName = pickString(bookingArgs as unknown as Record<string, unknown>, 'patient_last_name', 'patientLastName', 'last_name', 'lastName');
+      const dob = pickString(bookingArgs as unknown as Record<string, unknown>, 'patient_dob', 'patientDob', 'dob', 'date_of_birth');
+      const phone = pickString(bookingArgs as unknown as Record<string, unknown>, 'patient_phone', 'patientPhone', 'phone');
+      const email = pickString(bookingArgs as unknown as Record<string, unknown>, 'patient_email', 'patientEmail', 'email');
+      const reason = pickString(bookingArgs as unknown as Record<string, unknown>, 'reason', 'visitReason', 'appointmentReason');
+
+      bookingArgs.doctor_id = doctorId;
+      bookingArgs.slot_id = slotId;
+      bookingArgs.appointment_date = appointmentDate;
+      bookingArgs.appointment_time = appointmentTime;
+      bookingArgs.patient_first_name = firstName;
+      bookingArgs.patient_last_name = lastName;
+      bookingArgs.patient_dob = dob;
+      bookingArgs.patient_phone = phone;
+      bookingArgs.patient_email = email;
+      bookingArgs.reason = reason;
+
       const normalizedDate = normalizeDate(bookingArgs.appointment_date || '');
       const normalizedTime = normalizeTime(bookingArgs.appointment_time || '');
       if (normalizedDate) bookingArgs.appointment_date = normalizedDate;
@@ -198,16 +245,7 @@ function extractToolCalls(message: Record<string, unknown>): { id: string; name:
     for (const item of toolWithList) {
       const name = item.name || item.toolCall?.name || item.toolCall?.function?.name || '';
       const id = item.toolCall?.id || '';
-      let args: Record<string, unknown> = {};
-      if (item.toolCall?.parameters) {
-        args = item.toolCall.parameters as Record<string, unknown>;
-      } else if (item.toolCall?.function?.arguments) {
-        try {
-          args = JSON.parse(item.toolCall.function.arguments);
-        } catch {
-          // keep empty args if Vapi sends non-JSON arguments
-        }
-      }
+      const args = coerceArgs(item.toolCall?.parameters || item.toolCall?.arguments || item.toolCall?.function?.arguments);
       if (name) {
         calls.push({ id, name, args });
       }
@@ -221,12 +259,7 @@ function extractToolCalls(message: Record<string, unknown>): { id: string; name:
     for (const item of toolCallList) {
       const name = item.name || item.function?.name || '';
       const id = item.id || '';
-      let args: Record<string, unknown> = {};
-      if (item.parameters) {
-        args = item.parameters as Record<string, unknown>;
-      } else if (item.function?.arguments) {
-        try { args = JSON.parse(item.function.arguments); } catch { /* ignore */ }
-      }
+      const args = coerceArgs(item.parameters || item.arguments || item.function?.arguments);
       if (name) {
         calls.push({ id, name, args });
       }
@@ -235,9 +268,9 @@ function extractToolCalls(message: Record<string, unknown>): { id: string; name:
   }
 
   // Format 3: single functionCall object
-  const fc = message.functionCall as { name?: string; parameters?: Record<string, unknown> } | undefined;
+  const fc = message.functionCall as { name?: string; parameters?: Record<string, unknown> | string; arguments?: Record<string, unknown> | string } | undefined;
   if (fc && fc.name) {
-    calls.push({ id: '', name: fc.name, args: fc.parameters || {} });
+    calls.push({ id: '', name: fc.name, args: coerceArgs(fc.parameters || fc.arguments) });
   }
 
   return calls;
