@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getSessionContext } from '@/lib/ai/chat-engine';
 import { doctors } from '@/data/doctors';
 import { offices } from '@/data/offices';
+import store from '@/lib/store';
 
 // Build voice system prompt dynamically from data files — not hardcoded
 function buildVoiceDoctorList(): string {
@@ -212,6 +213,12 @@ USE THE TOOLS PROVIDED to find doctors, check available appointment slots, book 
     }
 
     const callData = await vapiResponse.json();
+    if (callData?.id) {
+      store.upsertVoiceCall(callData.id, {
+        sessionId,
+        phoneNumber: e164Phone,
+      });
+    }
 
     return NextResponse.json({
       success: true,

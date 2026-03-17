@@ -7,6 +7,14 @@ import { generateAvailabilities } from '@/data/availabilities';
 class Store {
   private sessions: Map<string, ConversationSession> = new Map();
   private appointments: Map<string, Appointment> = new Map();
+  private voiceCalls: Map<string, {
+    callId: string;
+    sessionId?: string;
+    phoneNumber?: string;
+    lastDoctorId?: string;
+    lastSlots?: Array<{ id: string; doctorId: string; date: string; startTime: string }>;
+    updatedAt: string;
+  }> = new Map();
   private allSlots: TimeSlot[];
 
   constructor() {
@@ -56,6 +64,40 @@ class Store {
 
   getAllAppointments(): Appointment[] {
     return Array.from(this.appointments.values());
+  }
+
+  // ─── Voice Calls ───
+
+  upsertVoiceCall(callId: string, patch: {
+    sessionId?: string;
+    phoneNumber?: string;
+    lastDoctorId?: string;
+    lastSlots?: Array<{ id: string; doctorId: string; date: string; startTime: string }>;
+  }): void {
+    const existing = this.voiceCalls.get(callId);
+    this.voiceCalls.set(callId, {
+      callId,
+      sessionId: patch.sessionId ?? existing?.sessionId,
+      phoneNumber: patch.phoneNumber ?? existing?.phoneNumber,
+      lastDoctorId: patch.lastDoctorId ?? existing?.lastDoctorId,
+      lastSlots: patch.lastSlots ?? existing?.lastSlots,
+      updatedAt: new Date().toISOString(),
+    });
+  }
+
+  getVoiceCall(callId: string): {
+    callId: string;
+    sessionId?: string;
+    phoneNumber?: string;
+    lastDoctorId?: string;
+    lastSlots?: Array<{ id: string; doctorId: string; date: string; startTime: string }>;
+    updatedAt: string;
+  } | undefined {
+    return this.voiceCalls.get(callId);
+  }
+
+  deleteVoiceCall(callId: string): void {
+    this.voiceCalls.delete(callId);
   }
 }
 

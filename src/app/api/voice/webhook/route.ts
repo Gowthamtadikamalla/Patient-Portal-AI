@@ -47,6 +47,12 @@ function pickString(args: Record<string, unknown>, ...keys: string[]): string {
   return '';
 }
 
+function extractCallId(body: Record<string, unknown>, message: Record<string, unknown>): string {
+  const msgCall = message.call as { id?: string } | undefined;
+  const bodyCall = body.call as { id?: string } | undefined;
+  return msgCall?.id || bodyCall?.id || '';
+}
+
 function normalizeTime(input: string): string {
   if (!input) return input;
   const t = input
@@ -120,6 +126,7 @@ function normalizeDate(input: string): string {
 async function executeFunction(
   funcName: string,
   funcArgs: Record<string, unknown>,
+  callId?: string,
 ): Promise<string> {
   switch (funcName) {
     case 'find_doctor':
@@ -135,6 +142,7 @@ async function executeFunction(
     case 'book_appointment': {
       const sessionId = `voice-${Date.now()}`;
       const bookingArgs = { ...funcArgs } as Record<string, string>;
+      const voiceState = callId ? store.getVoiceCall(callId) : undefined;
 
       // Accept snake_case and camelCase variants from different tool payloads/providers
       const doctorId = pickString(bookingArgs as unknown as Record<string, unknown>, 'doctor_id', 'doctorId');
@@ -148,10 +156,10 @@ async function executeFunction(
       const email = pickString(bookingArgs as unknown as Record<string, unknown>, 'patient_email', 'patientEmail', 'email');
       const reason = pickString(bookingArgs as unknown as Record<string, unknown>, 'reason', 'visitReason', 'appointmentReason');
 
-      bookingArgs.doctor_id = doctorId;
-      bookingArgs.slot_id = slotId;
-      bookingArgs.appointment_date = appointmentDate;
-      bookingArgs.appointment_time = appointmentTime;
+      bookingArgs.doctor_id = doctorId || voiceState?.lastDoctorId || '';
+      bookingArgs.slot_id = slotId || '';
+      bookingArgs.appointment_date = appointmentDate || '';
+      bookingArgs.appointment_time = appointmentTime || '';
       bookingArgs.patient_first_name = firstName;
       bookingArgs.patient_last_name = lastName;
       bookingArgs.patient_dob = dob;
@@ -163,6 +171,28 @@ async function executeFunction(
       const normalizedTime = normalizeTime(bookingArgs.appointment_time || '');
       if (normalizedDate) bookingArgs.appointment_date = normalizedDate;
       if (normalizedTime) bookingArgs.appointment_time = normalizedTime;
+
+      // Fill missing date/time from the last slots shown in this call when possible
+      if (voiceState?.lastSlots && voiceState.lastSlots.length > 0) {
+        const currentTime = bookingArgs.appointment_time || '';
+        const currentDate = bookingArgs.appointment_date || '';
+        if (currentTime && !currentDate) {
+          const candidate = voiceState.lastSlots.find(s => s.startTime === currentTime);
+          if (candidate) {
+            bookingArgs.appointment_date = candidate.date;
+            bookingArgs.slot_id = bookingArgs.slot_id || candidate.id;
+            bookingArgs.doctor_id = bookingArgs.doctor_id || candidate.doctorId;
+          }
+        }
+        if (!currentTime && currentDate) {
+          const candidate = voiceState.lastSlots.find(s => s.date === currentDate);
+          if (candidate) {
+            bookingArgs.appointment_time = candidate.startTime;
+            bookingArgs.slot_id = bookingArgs.slot_id || candidate.id;
+            bookingArgs.doctor_id = bookingArgs.doctor_id || candidate.doctorId;
+          }
+        }
+      }
 
       // Resolve slot: voice AI may pass date/time instead of exact slot_id
       let slotFound = bookingArgs.slot_id ? store.getSlotById(bookingArgs.slot_id) : null;
@@ -281,6 +311,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { message } = body;
     const eventType = message?.type;
+    const callId = extractCallId(body as Record<string, unknown>, (message || {}) as Record<string, unknown>);
 
     console.log('[Webhook] Event:', eventType);
 
@@ -306,7 +337,30 @@ export async function POST(request: NextRequest) {
       for (const tc of toolCalls) {
         let result: string;
         try {
-          result = await executeFunction(tc.name, tc.args);
+          result = await executeFunction(tc.name, tc.args, callId || undefined);
+
+          // Persist last offered slots for this call to make booking deterministic
+          if (callId && tc.name === 'get_available_slots') {
+            try {
+              const parsed = JSON.parse(result) as {
+                slots?: Array<{ id: string; date: string; startTime: string }>;
+              };
+              const doctorId = pickString(tc.args, 'doctor_id', 'doctorId');
+              if (parsed.slots && parsed.slots.length > 0 && doctorId) {
+                store.upsertVoiceCall(callId, {
+                  lastDoctorId: doctorId,
+                  lastSlots: parsed.slots.map(s => ({
+                    id: s.id,
+                    doctorId,
+                    date: s.date,
+                    startTime: s.startTime,
+                  })),
+                });
+              }
+            } catch {
+              // ignore malformed tool result payload
+            }
+          }
         } catch (error) {
           console.error('[Webhook] Error executing', tc.name, ':', error);
           result = JSON.stringify({ error: `Failed to execute ${tc.name}` });
@@ -327,6 +381,7 @@ export async function POST(request: NextRequest) {
     switch (eventType) {
       case 'end-of-call-report':
         console.log('[Webhook] Call ended:', message.endedReason);
+        if (callId) store.deleteVoiceCall(callId);
         return NextResponse.json({ received: true });
 
       case 'status-update':
