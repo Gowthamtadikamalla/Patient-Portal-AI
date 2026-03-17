@@ -40,7 +40,6 @@ export interface PatientInfo {
   phone: string;
   email: string;
   reason: string;
-  smsOptIn: boolean;
 }
 
 export interface Appointment {

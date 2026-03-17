@@ -157,7 +157,6 @@ USE THE TOOLS PROVIDED to find doctors, check available appointment slots, book 
                       patient_phone: { type: 'string', description: 'Patient phone number' },
                       patient_email: { type: 'string', description: 'Patient email address' },
                       reason: { type: 'string', description: 'Reason for visit' },
-                      sms_opt_in: { type: 'boolean', description: 'Whether patient opts into SMS reminders' },
                     },
                     required: ['doctor_id', 'slot_id', 'patient_first_name', 'patient_last_name', 'patient_dob', 'patient_phone', 'patient_email', 'reason'],
                   },

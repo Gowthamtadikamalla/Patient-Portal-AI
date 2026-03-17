@@ -72,7 +72,6 @@ export async function handleBookAppointment(args: {
   patient_phone: string;
   patient_email: string;
   reason: string;
-  sms_opt_in?: boolean;
 }, sessionId: string): Promise<string> {
   const slot = store.getSlotById(args.slot_id);
   if (!slot) {
@@ -102,7 +101,6 @@ export async function handleBookAppointment(args: {
     phone: args.patient_phone,
     email: args.patient_email,
     reason: args.reason,
-    smsOptIn: args.sms_opt_in || false,
   };
 
   const appointment: Appointment = {
@@ -201,20 +199,11 @@ function formatTime12h(time: string): string {
 
 async function triggerNotifications(appointment: Appointment): Promise<void> {
   try {
-    // Send email notification
+    // Send email notification via SendGrid
     const { sendAppointmentEmail } = await import('@/lib/notifications/email');
     await sendAppointmentEmail(appointment);
   } catch (e) {
     console.log('Email notification skipped:', (e as Error).message);
   }
-
-  try {
-    // Send SMS if opted in
-    if (appointment.patient.smsOptIn) {
-      const { sendAppointmentSMS } = await import('@/lib/notifications/sms');
-      await sendAppointmentSMS(appointment);
-    }
-  } catch (e) {
-    console.log('SMS notification skipped:', (e as Error).message);
-  }
 }
+
