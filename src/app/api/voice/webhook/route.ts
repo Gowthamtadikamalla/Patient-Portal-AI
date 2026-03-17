@@ -24,6 +24,41 @@ interface ToolWithToolCall {
   toolCall?: ToolCallItem;
 }
 
+function normalizeTime(input: string): string {
+  if (!input) return input;
+  const t = input.trim().toUpperCase();
+  if (/^\d{2}:\d{2}$/.test(t)) return t;
+  if (/^\d{1}:\d{2}$/.test(t)) return '0' + t;
+  const spaced = t.match(/^(\d{1,2})\s+(\d{2})\s*(AM|PM)$/);
+  if (spaced) {
+    let h = parseInt(spaced[1]);
+    const min = spaced[2];
+    if (spaced[3] === 'PM' && h < 12) h += 12;
+    if (spaced[3] === 'AM' && h === 12) h = 0;
+    return `${String(h).padStart(2, '0')}:${min}`;
+  }
+  const m = t.match(/^(\d{1,2}):?(\d{2})?\s*(AM|PM)$/);
+  if (m) {
+    let h = parseInt(m[1]);
+    const min = m[2] || '00';
+    if (m[3] === 'PM' && h < 12) h += 12;
+    if (m[3] === 'AM' && h === 12) h = 0;
+    return `${String(h).padStart(2, '0')}:${min}`;
+  }
+  return input;
+}
+
+function normalizeDate(input: string): string {
+  if (!input) return input;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(input.trim())) return input.trim();
+  const parsed = new Date(input);
+  if (Number.isNaN(parsed.getTime())) return input;
+  const y = parsed.getFullYear();
+  const m = String(parsed.getMonth() + 1).padStart(2, '0');
+  const d = String(parsed.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
 async function executeFunction(
   funcName: string,
   funcArgs: Record<string, unknown>,
@@ -42,6 +77,10 @@ async function executeFunction(
     case 'book_appointment': {
       const sessionId = `voice-${Date.now()}`;
       const bookingArgs = { ...funcArgs } as Record<string, string>;
+      const normalizedDate = normalizeDate(bookingArgs.appointment_date || '');
+      const normalizedTime = normalizeTime(bookingArgs.appointment_time || '');
+      if (normalizedDate) bookingArgs.appointment_date = normalizedDate;
+      if (normalizedTime) bookingArgs.appointment_time = normalizedTime;
 
       // Resolve slot: voice AI may pass date/time instead of exact slot_id
       let slotFound = bookingArgs.slot_id ? store.getSlotById(bookingArgs.slot_id) : null;
@@ -60,9 +99,9 @@ async function executeFunction(
         // Extract date/time from slot_id string
         if (!slotFound && bookingArgs.slot_id) {
           const dateMatch = bookingArgs.slot_id.match(/(\d{4}-\d{2}-\d{2})/);
-          const timeMatch = bookingArgs.slot_id.match(/(\d{2}:\d{2})/);
+          const timeMatch = bookingArgs.slot_id.match(/(\d{1,2}(?::|\s)\d{2}\s*(?:AM|PM)?)/i);
           if (dateMatch && timeMatch) {
-            const constructedId = `${bookingArgs.doctor_id}_${dateMatch[1]}_${timeMatch[1]}`;
+            const constructedId = `${bookingArgs.doctor_id}_${dateMatch[1]}_${normalizeTime(timeMatch[1])}`;
             slotFound = store.getSlotById(constructedId);
             if (slotFound) console.log('[Webhook] Slot resolved via extraction:', constructedId);
           }

@@ -3,7 +3,7 @@ import { getAvailableSlots } from '@/data/availabilities';
 import { offices, getOfficeById, getAllOffices } from '@/data/offices';
 import store from '@/lib/store';
 import { v4 as uuidv4 } from 'uuid';
-import { Appointment, PatientInfo, Doctor } from '@/lib/types';
+import { Appointment, PatientInfo } from '@/lib/types';
 
 // ─── Helpers ────────────────────────────────────────────────────────
 
@@ -31,6 +31,14 @@ function normalizeTime(input: string): string {
   const t = input.trim().toUpperCase();
   if (/^\d{2}:\d{2}$/.test(t)) return t;
   if (/^\d{1}:\d{2}$/.test(t)) return '0' + t;
+  const spaced = t.match(/^(\d{1,2})\s+(\d{2})\s*(AM|PM)$/);
+  if (spaced) {
+    let h = parseInt(spaced[1]);
+    const min = spaced[2];
+    if (spaced[3] === 'PM' && h < 12) h += 12;
+    if (spaced[3] === 'AM' && h === 12) h = 0;
+    return `${String(h).padStart(2, '0')}:${min}`;
+  }
   const m = t.match(/^(\d{1,2}):?(\d{2})?\s*(AM|PM)$/);
   if (m) {
     let h = parseInt(m[1]);
@@ -42,6 +50,17 @@ function normalizeTime(input: string): string {
   const n = t.match(/^(\d{1,2})$/);
   if (n) return `${String(parseInt(n[1])).padStart(2, '0')}:00`;
   return input;
+}
+
+function normalizeDate(input: string): string {
+  if (!input) return input;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(input.trim())) return input.trim();
+  const parsed = new Date(input);
+  if (Number.isNaN(parsed.getTime())) return input;
+  const y = parsed.getFullYear();
+  const m = String(parsed.getMonth() + 1).padStart(2, '0');
+  const d = String(parsed.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
 }
 
 // ─── Function Handlers ──────────────────────────────────────────────
@@ -116,16 +135,15 @@ export async function handleBookAppointment(args: {
   appointment_time?: string;
 }, sessionId: string): Promise<string> {
   const doctorId = resolveDoctorId(args.doctor_id);
+  const date = normalizeDate((args as Record<string, string>).appointment_date || '');
+  const rawTime = (args as Record<string, string>).appointment_time || '';
+  const time = normalizeTime(rawTime);
 
   // Try to find slot by ID first
   let slot = store.getSlotById(args.slot_id);
 
   // If not found, try to resolve from doctor + date + time
   if (!slot && doctorId) {
-    const date = (args as Record<string, string>).appointment_date || '';
-    const rawTime = (args as Record<string, string>).appointment_time || '';
-    const time = normalizeTime(rawTime);
-
     // Strategy 1: Construct the deterministic slot ID
     if (date && time) {
       const constructedId = `${doctorId}_${date}_${time}`;
@@ -135,7 +153,7 @@ export async function handleBookAppointment(args: {
     // Strategy 2: Extract date/time from the slot_id string
     if (!slot && args.slot_id) {
       const dateMatch = args.slot_id.match(/(\d{4}-\d{2}-\d{2})/);
-      const timeMatch = args.slot_id.match(/(\d{1,2}:\d{2})/);
+      const timeMatch = args.slot_id.match(/(\d{1,2}(?::|\s)\d{2}\s*(?:AM|PM)?)/i);
       if (dateMatch) {
         const extractedTime = timeMatch ? normalizeTime(timeMatch[1]) : time;
         if (extractedTime) {
@@ -154,6 +172,18 @@ export async function handleBookAppointment(args: {
         if (time) return s.startTime === time;
         return false;
       }) || undefined;
+    }
+
+    // Strategy 4: If only a time was provided, pick the earliest matching future slot
+    if (!slot && time) {
+      const allSlots = store.getAllSlots();
+      slot = allSlots
+        .filter(s => s.doctorId === doctorId && !s.isBooked && s.startTime === time)
+        .sort((a, b) => {
+          const dateCompare = a.date.localeCompare(b.date);
+          if (dateCompare !== 0) return dateCompare;
+          return a.startTime.localeCompare(b.startTime);
+        })[0];
     }
   }
 

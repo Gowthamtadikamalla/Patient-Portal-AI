@@ -146,7 +146,7 @@ USE THE TOOLS PROVIDED to find doctors, check available appointment slots, book 
                 type: 'function',
                 function: {
                   name: 'book_appointment',
-                  description: 'Book a specific appointment slot for a patient. You MUST provide appointment_date and appointment_time from the slots returned by get_available_slots. Use the slot_id if you have it, otherwise provide the date and time and the system will find the correct slot.',
+                  description: 'Book a specific appointment slot for a patient. Always capture the exact date and time the patient selected from get_available_slots before calling this function. If spoken naturally (for example "2 30 PM"), convert to HH:MM 24-hour format (14:30).',
                   parameters: {
                     type: 'object',
                     properties: {
@@ -161,7 +161,7 @@ USE THE TOOLS PROVIDED to find doctors, check available appointment slots, book 
                       patient_email: { type: 'string', description: 'Patient email address' },
                       reason: { type: 'string', description: 'Reason for visit' },
                     },
-                    required: ['doctor_id', 'patient_first_name', 'patient_last_name', 'patient_dob', 'patient_phone', 'patient_email', 'reason'],
+                    required: ['doctor_id', 'appointment_date', 'appointment_time', 'patient_first_name', 'patient_last_name', 'patient_dob', 'patient_phone', 'patient_email', 'reason'],
                   },
                 },
               },
