@@ -100,6 +100,7 @@ USE THE TOOLS PROVIDED to find doctors, check available appointment slots, book 
           number: e164Phone,
         },
         assistantOverrides: {
+          serverUrl: `${process.env.NEXT_PUBLIC_APP_URL || 'https://patient-portal-ai.vercel.app'}/api/voice/webhook`,
           firstMessage: `Hi! I'm Kyra from Kyron Medical Partners. I'm continuing our chat conversation. I have all the context from our previous discussion. How can I help you?`,
           model: {
             provider: 'openai',
@@ -145,12 +146,14 @@ USE THE TOOLS PROVIDED to find doctors, check available appointment slots, book 
                 type: 'function',
                 function: {
                   name: 'book_appointment',
-                  description: 'Book a specific appointment slot for a patient. Triggers email and SMS confirmation.',
+                  description: 'Book a specific appointment slot for a patient. You MUST provide appointment_date and appointment_time from the slots returned by get_available_slots. Use the slot_id if you have it, otherwise provide the date and time and the system will find the correct slot.',
                   parameters: {
                     type: 'object',
                     properties: {
-                      doctor_id: { type: 'string', description: 'Doctor ID' },
-                      slot_id: { type: 'string', description: 'Time slot ID from get_available_slots result' },
+                      doctor_id: { type: 'string', description: 'Doctor ID (e.g. dr-chen, dr-rivera, dr-patel, dr-wilson)' },
+                      slot_id: { type: 'string', description: 'The exact slot ID from get_available_slots (e.g. dr-rivera_2026-03-19_09:30). If you do not have this, provide appointment_date and appointment_time instead.' },
+                      appointment_date: { type: 'string', description: 'The appointment date in YYYY-MM-DD format (e.g. 2026-03-19)' },
+                      appointment_time: { type: 'string', description: 'The appointment start time in HH:MM 24-hour format (e.g. 09:30, 14:00)' },
                       patient_first_name: { type: 'string', description: 'Patient first name' },
                       patient_last_name: { type: 'string', description: 'Patient last name' },
                       patient_dob: { type: 'string', description: 'Patient date of birth' },
@@ -158,7 +161,7 @@ USE THE TOOLS PROVIDED to find doctors, check available appointment slots, book 
                       patient_email: { type: 'string', description: 'Patient email address' },
                       reason: { type: 'string', description: 'Reason for visit' },
                     },
-                    required: ['doctor_id', 'slot_id', 'patient_first_name', 'patient_last_name', 'patient_dob', 'patient_phone', 'patient_email', 'reason'],
+                    required: ['doctor_id', 'patient_first_name', 'patient_last_name', 'patient_dob', 'patient_phone', 'patient_email', 'reason'],
                   },
                 },
               },
