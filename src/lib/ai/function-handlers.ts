@@ -5,6 +5,45 @@ import store from '@/lib/store';
 import { v4 as uuidv4 } from 'uuid';
 import { Appointment, PatientInfo, Doctor } from '@/lib/types';
 
+// ─── Helpers ────────────────────────────────────────────────────────
+
+// Resolve doctor name/partial to ID. Handles: "dr-rivera", "Michael Rivera", "Rivera", "cardiology"
+function resolveDoctorId(input: string): string {
+  if (!input) return input;
+  if (doctors.some(d => d.id === input)) return input; // Already a valid ID
+  const lower = input.toLowerCase().replace(/^dr\.?\s*/i, '');
+  for (const doc of doctors) {
+    const docLower = doc.name.toLowerCase().replace('dr. ', '');
+    if (docLower === lower || doc.name.toLowerCase() === input.toLowerCase()) return doc.id;
+    if (lower.includes(docLower) || docLower.includes(lower)) return doc.id;
+  }
+  for (const doc of doctors) {
+    const lastName = doc.name.split(' ').pop()?.toLowerCase() || '';
+    if (lower.includes(lastName) && lastName.length > 2) return doc.id;
+    if (doc.specialty.toLowerCase() === lower) return doc.id;
+  }
+  return input;
+}
+
+// Normalize time: "9:00" → "09:00", "9 AM" → "09:00", "2 PM" → "14:00"
+function normalizeTime(input: string): string {
+  if (!input) return input;
+  const t = input.trim().toUpperCase();
+  if (/^\d{2}:\d{2}$/.test(t)) return t;
+  if (/^\d{1}:\d{2}$/.test(t)) return '0' + t;
+  const m = t.match(/^(\d{1,2}):?(\d{2})?\s*(AM|PM)$/);
+  if (m) {
+    let h = parseInt(m[1]);
+    const min = m[2] || '00';
+    if (m[3] === 'PM' && h < 12) h += 12;
+    if (m[3] === 'AM' && h === 12) h = 0;
+    return `${String(h).padStart(2, '0')}:${min}`;
+  }
+  const n = t.match(/^(\d{1,2})$/);
+  if (n) return `${String(parseInt(n[1])).padStart(2, '0')}:00`;
+  return input;
+}
+
 // ─── Function Handlers ──────────────────────────────────────────────
 // These are called when the AI uses function calling (tool_calls)
 
@@ -37,9 +76,10 @@ export async function handleGetAvailableSlots(args: {
   preferred_day?: string;
   preferred_time_of_day?: string;
 }): Promise<string> {
+  const doctorId = resolveDoctorId(args.doctor_id);
   const allSlots = store.getAllSlots();
   const timeOfDay = (args.preferred_time_of_day as 'morning' | 'afternoon' | 'any') || 'any';
-  const available = getAvailableSlots(allSlots, args.doctor_id, args.preferred_day, timeOfDay);
+  const available = getAvailableSlots(allSlots, doctorId, args.preferred_day, timeOfDay);
 
   if (available.length === 0) {
     return JSON.stringify({
@@ -48,7 +88,7 @@ export async function handleGetAvailableSlots(args: {
     });
   }
 
-  const doctor = doctors.find(d => d.id === args.doctor_id);
+  const doctor = doctors.find(d => d.id === doctorId);
 
   return JSON.stringify({
     slots: available.map(s => ({
@@ -72,8 +112,51 @@ export async function handleBookAppointment(args: {
   patient_phone: string;
   patient_email: string;
   reason: string;
+  appointment_date?: string;
+  appointment_time?: string;
 }, sessionId: string): Promise<string> {
-  const slot = store.getSlotById(args.slot_id);
+  const doctorId = resolveDoctorId(args.doctor_id);
+
+  // Try to find slot by ID first
+  let slot = store.getSlotById(args.slot_id);
+
+  // If not found, try to resolve from doctor + date + time
+  if (!slot && doctorId) {
+    const date = (args as Record<string, string>).appointment_date || '';
+    const rawTime = (args as Record<string, string>).appointment_time || '';
+    const time = normalizeTime(rawTime);
+
+    // Strategy 1: Construct the deterministic slot ID
+    if (date && time) {
+      const constructedId = `${doctorId}_${date}_${time}`;
+      slot = store.getSlotById(constructedId);
+    }
+
+    // Strategy 2: Extract date/time from the slot_id string
+    if (!slot && args.slot_id) {
+      const dateMatch = args.slot_id.match(/(\d{4}-\d{2}-\d{2})/);
+      const timeMatch = args.slot_id.match(/(\d{1,2}:\d{2})/);
+      if (dateMatch) {
+        const extractedTime = timeMatch ? normalizeTime(timeMatch[1]) : time;
+        if (extractedTime) {
+          slot = store.getSlotById(`${doctorId}_${dateMatch[1]}_${extractedTime}`);
+        }
+      }
+    }
+
+    // Strategy 3: Search all slots by doctor + date + time
+    if (!slot) {
+      const allSlots = store.getAllSlots();
+      slot = allSlots.find(s => {
+        if (s.doctorId !== doctorId || s.isBooked) return false;
+        if (date && time) return s.date === date && s.startTime === time;
+        if (date) return s.date === date;
+        if (time) return s.startTime === time;
+        return false;
+      }) || undefined;
+    }
+  }
+
   if (!slot) {
     return JSON.stringify({ success: false, error: 'Slot not found.' });
   }
@@ -81,7 +164,7 @@ export async function handleBookAppointment(args: {
     return JSON.stringify({ success: false, error: 'This slot has already been booked. Please choose another time.' });
   }
 
-  const doctor = doctors.find(d => d.id === args.doctor_id);
+  const doctor = doctors.find(d => d.id === doctorId);
   if (!doctor) {
     return JSON.stringify({ success: false, error: 'Doctor not found.' });
   }
@@ -92,7 +175,7 @@ export async function handleBookAppointment(args: {
   }
 
   // Book the slot
-  store.bookSlot(args.slot_id);
+  store.bookSlot(slot.id);
 
   const patient: PatientInfo = {
     firstName: args.patient_first_name,
