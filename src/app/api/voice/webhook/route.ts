@@ -37,11 +37,40 @@ export async function POST(request: NextRequest) {
             case 'get_available_slots':
               result = await handleGetAvailableSlots(funcArgs);
               break;
-            case 'book_appointment':
+            case 'book_appointment': {
               // Use a voice-specific session ID for tracking
               const sessionId = `voice-${Date.now()}`;
-              result = await handleBookAppointment(funcArgs, sessionId);
+
+              // Voice AI sometimes sends slot info differently — try to resolve the slot
+              let resolvedArgs = { ...funcArgs };
+
+              // If slot_id is missing or doesn't look like our format, try to build it
+              if (resolvedArgs.slot_id) {
+                const { default: storeInstance } = await import('@/lib/store');
+                const existingSlot = storeInstance.getSlotById(resolvedArgs.slot_id);
+
+                if (!existingSlot && resolvedArgs.doctor_id) {
+                  // Try to find the slot by doctor + date + time from the args
+                  console.log('[Voice Webhook] Slot ID not found directly, attempting fuzzy match:', resolvedArgs.slot_id);
+                  const allSlots = storeInstance.getAllSlots();
+                  const matchedSlot = allSlots.find(s => {
+                    if (s.doctorId !== resolvedArgs.doctor_id || s.isBooked) return false;
+                    // Check if the slot_id contains date or time info we can match
+                    const slotIdLower = (resolvedArgs.slot_id || '').toLowerCase();
+                    return slotIdLower.includes(s.date) || slotIdLower.includes(s.startTime);
+                  });
+
+                  if (matchedSlot) {
+                    console.log('[Voice Webhook] Fuzzy matched slot:', matchedSlot.id);
+                    resolvedArgs.slot_id = matchedSlot.id;
+                  }
+                }
+              }
+
+              console.log('[Voice Webhook] Booking with args:', JSON.stringify(resolvedArgs));
+              result = await handleBookAppointment(resolvedArgs, sessionId);
               break;
+            }
             case 'check_prescription_status':
               result = await handleCheckPrescription(funcArgs);
               break;
