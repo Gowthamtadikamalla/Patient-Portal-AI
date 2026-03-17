@@ -116,7 +116,6 @@ As specified in the assignment, the following data is hardcoded:
 ### Installation
 
 ```bash
-cd patient-portal
 npm install
 ```
 
