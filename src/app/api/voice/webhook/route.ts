@@ -26,7 +26,13 @@ interface ToolWithToolCall {
 
 function normalizeTime(input: string): string {
   if (!input) return input;
-  const t = input.trim().toUpperCase();
+  const t = input
+    .trim()
+    .toUpperCase()
+    .replace(/[.,]/g, ' ')
+    .replace(/\bA\s*M\b/g, 'AM')
+    .replace(/\bP\s*M\b/g, 'PM')
+    .replace(/\s+/g, ' ');
   if (/^\d{2}:\d{2}$/.test(t)) return t;
   if (/^\d{1}:\d{2}$/.test(t)) return '0' + t;
   const spaced = t.match(/^(\d{1,2})\s+(\d{2})\s*(AM|PM)$/);
@@ -45,6 +51,35 @@ function normalizeTime(input: string): string {
     if (m[3] === 'AM' && h === 12) h = 0;
     return `${String(h).padStart(2, '0')}:${min}`;
   }
+  const packed = t.match(/^(\d{3,4})\s*(AM|PM)?$/);
+  if (packed) {
+    const digits = packed[1];
+    const suffix = packed[2];
+    const hRaw = digits.length === 3 ? digits.slice(0, 1) : digits.slice(0, 2);
+    const mRaw = digits.length === 3 ? digits.slice(1) : digits.slice(2);
+    let h = parseInt(hRaw);
+    const min = parseInt(mRaw);
+    if (suffix === 'PM' && h < 12) h += 12;
+    if (suffix === 'AM' && h === 12) h = 0;
+    if (h >= 0 && h <= 23 && min <= 59) {
+      return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
+    }
+  }
+
+  // Fallback for noisy ASR strings like "9 9 30 AM" -> 09:30
+  const suffix = /\bPM\b/.test(t) ? 'PM' : /\bAM\b/.test(t) ? 'AM' : '';
+  const nums = t.match(/\d{1,2}/g) || [];
+  if (nums.length >= 2) {
+    const minCandidate = parseInt(nums[nums.length - 1]);
+    const hourCandidate = parseInt(nums[nums.length - 2]);
+    if (minCandidate <= 59 && hourCandidate <= 23) {
+      let h = hourCandidate;
+      if (suffix === 'PM' && h < 12) h += 12;
+      if (suffix === 'AM' && h === 12) h = 0;
+      return `${String(h).padStart(2, '0')}:${String(minCandidate).padStart(2, '0')}`;
+    }
+  }
+
   return input;
 }
 

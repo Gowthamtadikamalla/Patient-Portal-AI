@@ -28,7 +28,13 @@ function resolveDoctorId(input: string): string {
 // Normalize time: "9:00" → "09:00", "9 AM" → "09:00", "2 PM" → "14:00"
 function normalizeTime(input: string): string {
   if (!input) return input;
-  const t = input.trim().toUpperCase();
+  const t = input
+    .trim()
+    .toUpperCase()
+    .replace(/[.,]/g, ' ')
+    .replace(/\bA\s*M\b/g, 'AM')
+    .replace(/\bP\s*M\b/g, 'PM')
+    .replace(/\s+/g, ' ');
   if (/^\d{2}:\d{2}$/.test(t)) return t;
   if (/^\d{1}:\d{2}$/.test(t)) return '0' + t;
   const spaced = t.match(/^(\d{1,2})\s+(\d{2})\s*(AM|PM)$/);
@@ -49,6 +55,35 @@ function normalizeTime(input: string): string {
   }
   const n = t.match(/^(\d{1,2})$/);
   if (n) return `${String(parseInt(n[1])).padStart(2, '0')}:00`;
+  const packed = t.match(/^(\d{3,4})\s*(AM|PM)?$/);
+  if (packed) {
+    const digits = packed[1];
+    const suffix = packed[2];
+    const hRaw = digits.length === 3 ? digits.slice(0, 1) : digits.slice(0, 2);
+    const mRaw = digits.length === 3 ? digits.slice(1) : digits.slice(2);
+    let h = parseInt(hRaw);
+    const min = mRaw;
+    if (suffix === 'PM' && h < 12) h += 12;
+    if (suffix === 'AM' && h === 12) h = 0;
+    if (h >= 0 && h <= 23 && parseInt(min) <= 59) {
+      return `${String(h).padStart(2, '0')}:${min.padStart(2, '0')}`;
+    }
+  }
+
+  // Fallback for noisy ASR strings like "9 9 30 AM" -> 09:30
+  const suffix = /\bPM\b/.test(t) ? 'PM' : /\bAM\b/.test(t) ? 'AM' : '';
+  const nums = t.match(/\d{1,2}/g) || [];
+  if (nums.length >= 2) {
+    const minCandidate = parseInt(nums[nums.length - 1]);
+    const hourCandidate = parseInt(nums[nums.length - 2]);
+    if (minCandidate <= 59 && hourCandidate <= 23) {
+      let h = hourCandidate;
+      if (suffix === 'PM' && h < 12) h += 12;
+      if (suffix === 'AM' && h === 12) h = 0;
+      return `${String(h).padStart(2, '0')}:${String(minCandidate).padStart(2, '0')}`;
+    }
+  }
+
   return input;
 }
 
@@ -137,13 +172,21 @@ export async function handleBookAppointment(args: {
   const doctorId = resolveDoctorId(args.doctor_id);
   const date = normalizeDate((args as Record<string, string>).appointment_date || '');
   const rawTime = (args as Record<string, string>).appointment_time || '';
-  const time = normalizeTime(rawTime);
+  let time = normalizeTime(rawTime);
 
   // Try to find slot by ID first
   let slot = store.getSlotById(args.slot_id);
 
   // If not found, try to resolve from doctor + date + time
   if (!slot && doctorId) {
+    // If time was not explicitly parsed, attempt from slot_id text payload
+    if (!time && args.slot_id) {
+      const fuzzyTimeMatch = args.slot_id.match(/(\d{1,2}(?::|\s)\d{2}\s*(?:A\s*M|P\s*M|AM|PM)?|\d{3,4}\s*(?:A\s*M|P\s*M|AM|PM)?)/i);
+      if (fuzzyTimeMatch) {
+        time = normalizeTime(fuzzyTimeMatch[1]);
+      }
+    }
+
     // Strategy 1: Construct the deterministic slot ID
     if (date && time) {
       const constructedId = `${doctorId}_${date}_${time}`;
@@ -188,7 +231,29 @@ export async function handleBookAppointment(args: {
   }
 
   if (!slot) {
-    return JSON.stringify({ success: false, error: 'Slot not found.' });
+    const suggestions = doctorId
+      ? store.getAllSlots()
+        .filter(s => s.doctorId === doctorId && !s.isBooked)
+        .sort((a, b) => {
+          const dateCompare = a.date.localeCompare(b.date);
+          if (dateCompare !== 0) return dateCompare;
+          return a.startTime.localeCompare(b.startTime);
+        })
+        .slice(0, 6)
+        .map(s => ({ slot_id: s.id, date: s.date, time: s.startTime }))
+      : [];
+
+    return JSON.stringify({
+      success: false,
+      error: 'Slot not found.',
+      attempted: {
+        doctor_id: doctorId || args.doctor_id,
+        slot_id: args.slot_id,
+        appointment_date: date || (args as Record<string, string>).appointment_date || '',
+        appointment_time: time || rawTime || '',
+      },
+      suggested_slots: suggestions,
+    });
   }
   if (slot.isBooked) {
     return JSON.stringify({ success: false, error: 'This slot has already been booked. Please choose another time.' });
