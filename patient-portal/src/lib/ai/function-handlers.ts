@@ -140,24 +140,31 @@ export async function handleCheckPrescription(args: {
   patient_name: string;
   medication_name: string;
 }): Promise<string> {
-  // Simulated prescription statuses
-  const statuses = [
-    'Ready for pickup at your pharmacy',
-    'Processing — expected to be ready within 24-48 hours',
-    'Requires doctor authorization — we\'ve sent a request to your physician',
-    'Refill approved — being sent to your pharmacy',
-  ];
-  
-  // Deterministic based on input
-  const seed = (args.patient_name + args.medication_name).split('').reduce((a, c) => a + c.charCodeAt(0), 0);
-  const status = statuses[seed % statuses.length];
+  const { lookupPrescription } = await import('@/data/prescriptions');
+
+  const results = lookupPrescription(args.patient_name, args.medication_name);
+
+  if (results.length === 0) {
+    return JSON.stringify({
+      found: false,
+      patient: args.patient_name,
+      medication: args.medication_name,
+      message: `No prescription refill records found for "${args.patient_name}"${args.medication_name ? ` with medication "${args.medication_name}"` : ''}. This could mean the refill has not been requested yet, or the name may not match our records. Please call our office for assistance.`,
+    });
+  }
 
   return JSON.stringify({
+    found: true,
     patient: args.patient_name,
-    medication: args.medication_name,
-    status,
-    lastUpdated: new Date().toISOString().split('T')[0],
-    note: 'For questions about your prescription, please contact your pharmacy or call our office directly.',
+    prescriptions: results.map(r => ({
+      medication: r.medication,
+      dosage: r.dosage,
+      prescribedBy: r.prescribedBy,
+      status: r.statusMessage,
+      pharmacy: r.pharmacy,
+      refillsRemaining: r.refillsRemaining,
+      lastUpdated: r.lastUpdated,
+    })),
   });
 }
 

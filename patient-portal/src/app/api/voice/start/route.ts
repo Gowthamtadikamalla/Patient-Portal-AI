@@ -1,5 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSessionContext } from '@/lib/ai/chat-engine';
+import { doctors } from '@/data/doctors';
+import { offices } from '@/data/offices';
+
+// Build voice system prompt dynamically from data files — not hardcoded
+function buildVoiceDoctorList(): string {
+  return doctors.map(d => `- ${d.name} (ID: ${d.id}) — ${d.specialty} (${d.bodyParts.slice(0, 5).join(', ')})`).join('\n');
+}
+
+function buildVoiceOfficeList(): string {
+  return offices.map(o => {
+    const weekdays = Object.entries(o.hours)
+      .filter(([, h]) => h !== 'Closed')
+      .map(([day, h]) => `${day}: ${h}`)
+      .join(', ');
+    return `- ${o.name}: ${o.address}, ${o.city}, ${o.state} ${o.zip} | ${o.phone} | ${weekdays}`;
+  }).join('\n');
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -35,12 +52,12 @@ export async function POST(request: NextRequest) {
     const normalizedPhone = phoneNumber.replace(/[\s\-\(\)\.]/g, '');
     const e164Phone = normalizedPhone.startsWith('+') ? normalizedPhone : `+1${normalizedPhone}`;
 
-    // Build the system prompt with all context the voice AI needs
+    // Build the system prompt dynamically from data files
     const voiceSystemPrompt = `You are Kyra, the AI medical receptionist for Kyron Medical Partners.
 
 You are warm, professional, and empathetic. You help patients with:
 1. Scheduling appointments — collect patient info, match them to the right specialist, and book available time slots
-2. Checking prescription refill status
+2. Checking prescription refill status — look up by patient name and medication
 3. Providing office information — addresses, hours, phone numbers
 
 IMPORTANT: You are continuing a conversation that started in web chat. Here is the previous conversation context:
@@ -57,16 +74,16 @@ SAFETY RULES:
 - If asked for medical advice, say: "I'm not able to provide medical advice. I'd recommend discussing that directly with your doctor. Would you like to schedule an appointment?"
 
 AVAILABLE DOCTORS:
-- Dr. Sarah Chen (ID: dr-chen) — Orthopedics (bones, joints, muscles, back, knee, hip, shoulder)
-- Dr. Michael Rivera (ID: dr-rivera) — Cardiology (heart, chest, blood pressure, palpitations)
-- Dr. Priya Patel (ID: dr-patel) — Dermatology (skin, rash, acne, moles, eczema)
-- Dr. James Wilson (ID: dr-wilson) — Gastroenterology (stomach, digestion, abdomen, nausea, bowel)
+${buildVoiceDoctorList()}
 
 OFFICE LOCATIONS:
-- Downtown Boston: 100 Federal Street, Suite 401, Boston, MA 02110 | Mon-Fri 8am-6pm | (617) 555-0100
-- Cambridge Medical: 25 First Street, Suite 200, Cambridge, MA 02141 | Mon-Sat 7am-7pm | (617) 555-0200
+${buildVoiceOfficeList()}
 
-USE THE TOOLS PROVIDED to find doctors, check available appointment slots, and book appointments. Always use the real data from tools — never make up appointment times.`;
+PRESCRIPTION REFILL:
+- Sample patients with prescriptions on file: John Smith, Sarah Johnson, Michael Brown, Emily Davis, Robert Wilson
+- Ask for patient name and medication name, then use check_prescription_status tool
+
+USE THE TOOLS PROVIDED to find doctors, check available appointment slots, book appointments, and look up prescriptions. Always use the real data from tools — never make up appointment times or information.`;
 
     // Create Vapi outbound call with conversation context
     // NOTE: serverUrl for webhook is configured on the Vapi assistant in the dashboard
@@ -150,7 +167,7 @@ USE THE TOOLS PROVIDED to find doctors, check available appointment slots, and b
                 type: 'function',
                 function: {
                   name: 'check_prescription_status',
-                  description: 'Check the status of a prescription refill request',
+                  description: 'Check the status of a prescription refill request by patient name and medication',
                   parameters: {
                     type: 'object',
                     properties: {
